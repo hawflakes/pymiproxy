@@ -5,7 +5,7 @@ from SocketServer import ThreadingMixIn
 from os import path, mkdir, listdir
 from httplib import HTTPResponse
 from tempfile import gettempdir
-from urlparse import urlparse
+from urlparse import urlparse, urlunparse
 from ssl import wrap_socket
 from socket import socket
 from re import compile
@@ -128,17 +128,18 @@ class UnsupportedSchemeException(Exception):
 class ProxyHandler(BaseHTTPRequestHandler):
 
     r = compile(r'http://[^/]+(/?.*)(?i)')
+    path_regex = compile(r'(/?.*)(?i)')
 
     def _connect_to_host(self):
         # Get hostname and port to connect to
         if self.is_connect:
             host, port = self.path.split(':')
         else:
-            u = urlparse(self.path)
+            u = urlparse(self.path, 'http') #defaults to http
             if u.scheme != 'http':
                 raise UnsupportedSchemeException('Unknown scheme %s' % repr(u.scheme))
-            host = u.hostname
-            port = u.port or 80
+            host = u.hostname if u.hostname else 'localhost'
+            port = u.port or 8282
 
         # Connect to destination
         self._proxy_sock = socket()
@@ -187,8 +188,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             except Exception, e:
                 self.send_error(500, str(e))
                 return
-            # Extract path
-            path = self.r.search(path).groups()[0] or '/'
+            # re-extract path that was done in _connect_to_host() because this code is stupid.
+            path_result = self.path_regex.search(path)
+            path = path_result.groups()[0] if path_result else '/'
 
         # Build request
         req = '%s %s %s\r\n' % (self.command, path, self.request_version)
@@ -262,7 +264,7 @@ class InvalidInterceptorPluginException(Exception):
 
 class MitmProxy(HTTPServer):
 
-    def __init__(self, server_address=('', 8080), RequestHandlerClass=ProxyHandler, bind_and_activate=True, ca_file='ca.pem'):
+    def __init__(self, server_address=('localhost', 8085), RequestHandlerClass=ProxyHandler, bind_and_activate=True, ca_file='ca.pem'):
         HTTPServer.__init__(self, server_address, RequestHandlerClass, bind_and_activate)
         self.ca = CertificateAuthority(ca_file)
         self._res_plugins = []
